@@ -1275,8 +1275,11 @@ function collectDesktopReadability(svgAttrs, fragment, contract) {
     minimumSourceTextPx,
     requestedMinimumTextPx,
   }) : null;
-  const availableDiagramWidth = declared?.guaranteedSvgWidth ?? DESKTOP_READER_DIAGRAM_WIDTH;
-  const budgetBasis = declared ? 'recognized-declared-wide' : 'legacy-930';
+  // A Sequence with blocks is shown at its actual size and scrolls sideways
+  // (viewer Sequence Actual Size), so its text projects 1:1.
+  const actualSize = svgAttrs['data-seq-actual-size'] !== undefined && Number.isFinite(viewBoxWidth) && viewBoxWidth > 0;
+  const availableDiagramWidth = actualSize ? viewBoxWidth : declared?.guaranteedSvgWidth ?? DESKTOP_READER_DIAGRAM_WIDTH;
+  const budgetBasis = actualSize ? 'actual-size' : declared ? 'recognized-declared-wide' : 'legacy-930';
   const scale = Number.isFinite(viewBoxWidth) && viewBoxWidth > 0
     ? Math.min(1, availableDiagramWidth / viewBoxWidth) : Number.NaN;
   const projected = entries.map((entry) => ({

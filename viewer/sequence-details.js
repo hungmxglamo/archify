@@ -1,4 +1,19 @@
     /* ============================================================
+       Sequence Actual Size — a Sequence with blocks is read at its real
+       size: the SVG keeps its viewBox width in CSS pixels and the diagram
+       scrolls sideways when it is wider than the window.
+       ============================================================ */
+    (function () {
+      var svg = document.querySelector('.diagram-container > svg[data-seq-actual-size]');
+      if (!svg) return;
+      svg.style.setProperty('width', svg.viewBox.baseVal.width + 'px', 'important');
+      svg.style.setProperty('max-width', 'none', 'important');
+      svg.style.setProperty('min-width', '0', 'important');
+      svg.style.setProperty('height', 'auto', 'important');
+      svg.parentNode.style.setProperty('overflow-x', 'auto', 'important');
+    })();
+
+    /* ============================================================
        Sequence Details — open a step to read the detail steps inside a
        block right after it. The renderer stores each step's detail markup,
        where it starts (data-seq-base) and its height. Opening a step inserts

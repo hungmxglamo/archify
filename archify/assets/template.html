@@ -505,7 +505,7 @@ This Font Software is licensed under the SIL Open Font License, Version 1.1 (htt
 
     body {
       --archify-page-top: 2rem;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans', Roboto, 'Helvetica Neue', Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
       background: var(--bg);
       min-height: 100vh;
@@ -4173,6 +4173,7 @@ This Font Software is licensed under the SIL Open Font License, Version 1.1 (htt
     /* Text helpers */
     .t-primary { fill: var(--text); }
     .t-muted   { fill: var(--text-muted); }
+    .t-note    { fill: color-mix(in srgb, var(--text) 72%, var(--text-muted)); }
     .t-dim     { fill: var(--text-dim); }
     .t-frontend   { fill: var(--frontend-stroke); }
     .t-backend    { fill: var(--backend-stroke); }
@@ -5114,7 +5115,7 @@ This Font Software is licensed under the SIL Open Font License, Version 1.1 (htt
     .seq-group[data-layer="firmware"] { fill: color-mix(in srgb, var(--cloud-fill) 45%, transparent); stroke: var(--cloud-stroke); }
     .seq-group[data-layer="hardware"] { fill: color-mix(in srgb, var(--external-fill) 55%, transparent); stroke: var(--external-stroke); }
     .seq-group[data-layer="external"] { fill: color-mix(in srgb, var(--messagebus-fill) 45%, transparent); stroke: var(--messagebus-stroke); }
-    .seq-group-title { fill: var(--text-muted); letter-spacing: 0.02em; }
+    .seq-group-title { fill: var(--text-muted); }
     .seq-step-badge circle { fill: var(--mask); stroke: var(--text-muted); stroke-width: 1; }
     .seq-step-badge text { fill: var(--text-muted); }
     .seq-step-number { fill: var(--text-muted); }
@@ -5125,7 +5126,31 @@ This Font Software is licensed under the SIL Open Font License, Version 1.1 (htt
     .seq-step-toggle[data-seq-open] .seq-toggle-plus { display: none; }
     .seq-step-toggle:hover circle, .seq-step-toggle:focus-visible circle { stroke: var(--text); stroke-width: 2; }
     .seq-step-toggle:focus { outline: none; }
-    .seq-detail-band { fill: color-mix(in srgb, var(--mask) 55%, transparent); stroke: color-mix(in srgb, var(--arrow-emphasis) 55%, transparent); stroke-width: 1; stroke-dasharray: 4 3; }
+    .seq-detail-band { fill: color-mix(in srgb, var(--mask) 20%, transparent); stroke: color-mix(in srgb, var(--arrow-emphasis) 55%, transparent); stroke-width: 1; stroke-dasharray: 4 3; }
+
+    /* Semantic passport text sized like the personal HTML reports (local addition).
+       The stock panel uses 8-11px text, which is hard to read. */
+    .focus-chip { width: min(25rem, calc(100% - 13rem)); font-size: 0.8125rem; }
+    .focus-chip button { font-size: 0.75rem; }
+    .relationship-lens-eyebrow,
+    .relationship-lens-group-title,
+    .relationship-lens-direction,
+    .semantic-passport-reach-label,
+    .semantic-passport-evidence-status { font-size: 0.6875rem; }
+    .relationship-lens-title { font-size: 1rem; }
+    .semantic-passport-detail,
+    .relationship-lens-summary,
+    .relationship-lens-empty { font-size: 0.8125rem; }
+    .semantic-passport-meta span,
+    .semantic-passport-meta code,
+    .semantic-passport-repository,
+    .semantic-passport-source code,
+    .semantic-passport-source small,
+    .semantic-passport-reach-status { font-size: 0.75rem; }
+    .semantic-passport-source strong,
+    .semantic-passport-reach-actions strong { font-size: 0.8125rem; }
+    .relationship-lens-row strong { font-size: 0.875rem; }
+    .relationship-lens-row small { font-size: 0.75rem; }
   </style>
 </head>
 <body>
@@ -8378,6 +8403,21 @@ This Font Software is licensed under the SIL Open Font License, Version 1.1 (htt
       };
     })();
 
+
+    /* ============================================================
+       Sequence Actual Size — a Sequence with blocks is read at its real
+       size: the SVG keeps its viewBox width in CSS pixels and the diagram
+       scrolls sideways when it is wider than the window.
+       ============================================================ */
+    (function () {
+      var svg = document.querySelector('.diagram-container > svg[data-seq-actual-size]');
+      if (!svg) return;
+      svg.style.setProperty('width', svg.viewBox.baseVal.width + 'px', 'important');
+      svg.style.setProperty('max-width', 'none', 'important');
+      svg.style.setProperty('min-width', '0', 'important');
+      svg.style.setProperty('height', 'auto', 'important');
+      svg.parentNode.style.setProperty('overflow-x', 'auto', 'important');
+    })();
 
     /* ============================================================
        Sequence Details — open a step to read the detail steps inside a

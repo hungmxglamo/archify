@@ -10,17 +10,32 @@ import { brandLabelFitWidth, brandMetadataFor, brandTopRailProblem, renderBrandM
 import { translateMessage as i18nText } from '../shared/i18n.mjs';
 import { DESKTOP_READER_DIAGRAM_WIDTH, MIN_PROJECTED_NODE_TEXT_PX, minimumReadableSourceTextPx } from '../shared/desktop-readability.mjs';
 
-const participantTextFit = {
-  sublabelPreferred: 7,
-  sublabelMinimum: 6,
-};
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { diagram: sequence, template, outPath, sourceEvidence } = await loadDiagramWithBrandMarks({
   rendererDir: __dirname,
   diagramType: 'sequence',
   defaultExample: 'cache-miss-request.sequence.json'
 });
+
+// Block layout: a renderer-sized Sequence with blocks (groups) is read at its
+// actual size with horizontal scroll, so its text sizes are on-screen sizes.
+const blockMode = !sequence.meta?.viewBox && (sequence.meta?.column_fit || 'spread') === 'spread'
+  && asArray(sequence.groups).length > 0;
+const BLOCK_TEXT = {
+  message: 12.5,
+  note: 10,
+  label: 13,
+  labelMinimum: 10,
+  sublabel: 9.5,
+  sublabelMinimum: 8,
+  groupTitle: 11,
+  segment: 11,
+  step: 10,
+};
+
+const participantTextFit = blockMode
+  ? { sublabelPreferred: BLOCK_TEXT.sublabel, sublabelMinimum: BLOCK_TEXT.sublabelMinimum }
+  : { sublabelPreferred: 7, sublabelMinimum: 6 };
 
 const LEGEND_CATALOG = [
   { kind: 'emphasis', className: 'a-emphasis', marker: 'arrowhead-emphasis', strokeWidth: 1.8 },
@@ -70,18 +85,26 @@ function timelineLabelsFit(canvasWidth) {
     const center = (centers.get(message.from) + centers.get(message.to)) / 2;
     const halfWidth = Math.max(34, textUnits(message.label) * unitWidth + 12) / 2;
     return center - halfWidth >= 0 && center + halfWidth <= canvasWidth;
-  }) && asArray(sequence.segments).every((segment) => 56 + Math.max(42, textUnits(segment.label) * 5.2 + 14) <= canvasWidth - 48);
+  }) && asArray(sequence.segments).every((segment) => 56 + Math.max(42, textUnits(segment.label) * SEGMENT_UNIT_WIDTH + 14) <= canvasWidth - 48);
 }
 const readableCanvasWidth = Math.floor(DESKTOP_READER_DIAGRAM_WIDTH * participantTextFit.sublabelPreferred / MIN_PROJECTED_NODE_TEXT_PX);
 // Message labels are drawn in IBM Plex Sans, about 0.52em per character.
 const SANS_WIDTH_FACTOR = 0.52;
+// Box text is fitted with the 0.6em monospace estimate; IBM Plex Sans is about
+// 0.53em wide, so the same text fits one step larger.
+const SANS_FIT_SCALE = 1.08;
+function sansFontSize(fitted) {
+  return Math.round(fitted * SANS_FIT_SCALE * 10) / 10;
+}
 // Activation bars reach 5px past a lifeline; keep 3px of air beyond each one.
 const LABEL_BAR_CLEARANCE = 8;
+const SEGMENT_FONT_SIZE = blockMode ? BLOCK_TEXT.segment : 9;
+const SEGMENT_UNIT_WIDTH = blockMode ? BLOCK_TEXT.segment * 0.58 : 5.2;
 // Widen a renderer-sized canvas until each message label fits between the
 // activation bars of the lanes it spans, but never past the readable width.
 function labelCanvasWidth(baseWidth) {
   const participantIndex = new Map(asArray(sequence.participants).map((participant, index) => [participant.id, index]));
-  const fontSize = sequence.meta?.quality_profile === 'showcase' ? 11 : 10;
+  const fontSize = sequence.meta?.quality_profile === 'showcase' ? 10.5 : 10;
   const labelsFit = (canvasWidth) => {
     const { gap } = spreadColumnGeometry(canvasWidth);
     return asArray(sequence.messages).every((message) => {
@@ -96,7 +119,46 @@ function labelCanvasWidth(baseWidth) {
   }
   return Math.max(baseWidth, readableCanvasWidth);
 }
+// Block layout columns: boxes as wide as their 13px names, columns inside one
+// block close together, and the space between blocks BLOCK_GAP_RATIO times
+// wider, so a call between blocks visibly travels.
+const BLOCK_SIDE_MARGIN = 62;
+const BLOCK_RIGHT_MARGIN = 40;
+const BLOCK_INSIDE_AIR = 14;
+const BLOCK_GAP_RATIO = 2.2;
+function blockParticipantWidth() {
+  const needed = Math.max(...asArray(sequence.participants).map((participant) => Math.max(
+    textUnits(participant.label) * BLOCK_TEXT.label * 0.6 + 8,
+    participant.sublabel ? minimumNodeTextWidth(participant.sublabel, BLOCK_TEXT.sublabel) + 8 : 0,
+  )));
+  return Math.min(190, Math.max(86, Math.ceil(needed)));
+}
+function blockGaps(width) {
+  const ids = asArray(sequence.participants).map((participant) => participant.id);
+  const groupOf = new Map();
+  asArray(sequence.groups).forEach((group) => asArray(group.participants).forEach((id) => groupOf.set(id, group.id)));
+  const base = width + BLOCK_INSIDE_AIR;
+  const inside = ids.slice(1).map((id, gap) => groupOf.has(id) && groupOf.get(id) === groupOf.get(ids[gap]));
+  const gaps = inside.map((sameBlock) => (sameBlock ? base : base * BLOCK_GAP_RATIO));
+  // A top-level label between neighbours widens its gap; inside a block only a
+  // little, since a label wider than its lanes moves away from active bars.
+  for (const message of asArray(sequence.messages)) {
+    const from = ids.indexOf(message.from);
+    const to = ids.indexOf(message.to);
+    if (from < 0 || to < 0 || Math.abs(from - to) !== 1) continue;
+    const gap = Math.min(from, to);
+    const need = textUnits(message.label) * BLOCK_TEXT.message * SANS_WIDTH_FACTOR + 8 + 2 * LABEL_BAR_CLEARANCE;
+    gaps[gap] = Math.max(gaps[gap], inside[gap] ? Math.min(need, base * 1.25) : need);
+  }
+  return gaps.map((gap) => Math.round(gap * 100) / 100);
+}
+function blockCanvasWidth() {
+  const width = blockParticipantWidth();
+  const span = blockGaps(width).reduce((sum, gap) => sum + gap, 0);
+  return Math.ceil(BLOCK_SIDE_MARGIN + width + span + BLOCK_RIGHT_MARGIN);
+}
 function automaticCanvasWidth() {
+  if (blockMode) return blockCanvasWidth();
   return labelCanvasWidth(participantCanvasWidth());
 }
 function participantCanvasWidth() {
@@ -141,7 +203,7 @@ const participantCount = Math.max(1, asArray(sequence.participants).length);
 // Resolve the actual final-canvas text floor before choosing header geometry.
 // Notes and automatic height must use the resulting column gaps below.
 const readableMessages = sequence.meta?.quality_profile === 'showcase';
-const readableAutomaticSublabel = readableMessages && automaticWidth !== null && columnFit === 'spread';
+const readableAutomaticSublabel = readableMessages && automaticWidth !== null && columnFit === 'spread' && !blockMode;
 const readableSublabelMinimum = readableAutomaticSublabel
   ? Math.max(participantTextFit.sublabelMinimum, Math.ceil(minimumReadableSourceTextPx(canvasWidth) * 10) / 10)
   : participantTextFit.sublabelMinimum;
@@ -168,10 +230,10 @@ function participantSpreadGeometry() {
 
 const preferredSideMargin = 62;
 const spreadGeometry = participantSpreadGeometry();
-const participantW = columnFit === 'spread' ? spreadGeometry.width : 86;
+const participantW = blockMode ? blockParticipantWidth() : columnFit === 'spread' ? spreadGeometry.width : 86;
 // Narrow feasible frames can reduce the left margin, while ordinary frames
 // keep 62px. Compute card width first so this does not change its sizing rule.
-const sideMargin = columnFit === 'spread'
+const sideMargin = blockMode ? BLOCK_SIDE_MARGIN : columnFit === 'spread'
   ? spreadGeometry.margin
   : preferredSideMargin;
 // Fit the authored width when feasible, preserving a real 16px card gutter.
@@ -182,19 +244,28 @@ const colGap = columnFit === 'spread' && participantCount > 1
 const leftX = columnFit === 'spread' ? sideMargin + participantW / 2 : sideMargin;
 const participantIndexById = new Map(asArray(sequence.participants).map((participant, index) => [participant.id, index]));
 
+// Column offsets from the first lifeline: even spacing, or the block gaps.
+function columnOffsetList() {
+  if (!blockMode) return Array.from({ length: participantCount }, (_, index) => index * colGap);
+  const offsets = [0];
+  blockGaps(participantW).forEach((gap, index) => offsets.push(Math.round((offsets[index] + gap) * 100) / 100));
+  return offsets;
+}
+const columnOffsets = columnOffsetList();
+
 function participantX(index) {
-  return leftX + index * colGap;
+  return leftX + columnOffsets[index];
 }
 
 // A note wraps inside one gap between neighbouring lifelines, so it never
 // crosses an unrelated lifeline or activation bar (#676). Every character
 // stays visible, including in image exports: long unbroken text (a URL or
 // path) breaks after its punctuation, otherwise at any character.
-const NOTE_FONT_SIZE = 7;
+// Notes are drawn in IBM Plex Sans; NOTE_WIDTH_FACTOR is a safe width per
+// character for that font (mixed text measures about 0.52em).
+const NOTE_FONT_SIZE = blockMode ? BLOCK_TEXT.note : 8.5;
 const NOTE_LINE_HEIGHT = NOTE_FONT_SIZE + 4;
-// Notes are drawn in IBM Plex Sans (about 0.52em per character), so 8px text
-// fits the same wrap width that 7px monospace text (0.6em) is measured with.
-const NOTE_RENDER_FONT_SIZE = 8;
+const NOTE_WIDTH_FACTOR = 0.55;
 // The first line keeps its original position: 12px past the arrow start,
 // which sits 7px from the lifeline.
 const NOTE_ARROW_INSET = 7;
@@ -210,7 +281,7 @@ let noteWordSegmenter;
 const noteLayouts = new Map();
 
 function noteTextWidth(text) {
-  return minimumNodeTextWidth(text, NOTE_FONT_SIZE);
+  return textUnits(text) * NOTE_FONT_SIZE * NOTE_WIDTH_FACTOR;
 }
 
 // Index after the last punctuation break in `piece`, or its full length.
@@ -319,6 +390,76 @@ function noteLayout(message) {
   return result;
 }
 
+// Block layout spaces the steps by what each needs instead of the authored y:
+// room for the step's note, then for the next label, plus room for a segment
+// frame edge and title between two steps. Activation edges move with the
+// steps around them; segment edges sit just after the step above (end) or
+// just before the step below (start).
+const STEP_AIR = 30;
+const SEGMENT_EDGE_ROOM = 22;
+function noteLineCount(message) {
+  const fromIndex = participantIndexById.get(message.from);
+  const toIndex = participantIndexById.get(message.to);
+  if (!message.note || fromIndex === undefined || toIndex === undefined || fromIndex === toIndex) return 0;
+  const gap = noteGapIndex(fromIndex, toIndex);
+  const x = participantX(gap) + NOTE_ARROW_INSET + NOTE_TEXT_INSET;
+  const maxWidth = Math.max(1, participantX(gap + 1) - NOTE_LIFELINE_CLEARANCE - x);
+  return noteTextWidth(message.note) <= maxWidth ? 1 : wrapNoteText(message.note, maxWidth).length;
+}
+
+function stepDepth(message) {
+  const lines = noteLineCount(message);
+  const noteBottom = lines ? 22 + (lines - 1) * NOTE_LINE_HEIGHT : 6;
+  // The detail toggle sits 13px below the arrow with a 7px radius.
+  return Math.max(noteBottom, asArray(message.details).length ? 20 : 0);
+}
+
+function compactTimeline() {
+  const messages = asArray(sequence.messages).filter((message) => typeof message.y === 'number')
+    .sort((a, b) => a.y - b.y);
+  if (!messages.length) return;
+  const segments = asArray(sequence.segments);
+  const oldYs = messages.map((message) => message.y);
+  const newYs = [oldYs[0]];
+  for (let index = 1; index < messages.length; index += 1) {
+    const [low, high] = [oldYs[index - 1], oldYs[index]];
+    const crossing = (edge) => segments.some((segment) => segment[edge] > low && segment[edge] < high);
+    const edges = (crossing('to') ? 1 : 0) + (crossing('from') ? 1 : 0);
+    newYs.push(newYs[index - 1] + stepDepth(messages[index - 1]) + STEP_AIR + edges * SEGMENT_EDGE_ROOM);
+  }
+  const anchorIndex = (y) => oldYs.findIndex((old) => old >= y);
+  // Any other y moves by interpolation between the steps around it.
+  const mapY = (y) => {
+    const next = anchorIndex(y);
+    if (next === 0) return y;
+    if (next < 0) return y + newYs[newYs.length - 1] - oldYs[oldYs.length - 1];
+    if (oldYs[next] === y) return newYs[next];
+    const ratio = (y - oldYs[next - 1]) / (oldYs[next] - oldYs[next - 1]);
+    return newYs[next - 1] + ratio * (newYs[next] - newYs[next - 1]);
+  };
+  const mapSegmentEdge = (y, edge) => {
+    const next = anchorIndex(y);
+    if (next <= 0) return mapY(y);
+    if (oldYs[next] === y) return newYs[next];
+    return edge === 'to'
+      ? newYs[next - 1] + stepDepth(messages[next - 1]) + 8
+      : newYs[next] - 28;
+  };
+  for (const activation of asArray(sequence.activations)) {
+    activation.from = mapY(activation.from);
+    activation.to = mapY(activation.to);
+  }
+  for (const segment of segments) {
+    segment.from = mapSegmentEdge(segment.from, 'from');
+    segment.to = mapSegmentEdge(segment.to, 'to');
+  }
+  messages.forEach((message, index) => {
+    message.y = newYs[index];
+  });
+  noteLayouts.clear();
+}
+if (blockMode) compactTimeline();
+
 const contentBottom = Math.max(
   0,
   ...asArray(sequence.messages).map((message) => (message.note
@@ -350,8 +491,8 @@ const viewBox = sequence.meta?.viewBox || [automaticWidth, automaticHeight];
 // Layout and checks keep the monospace estimate (messageUnitWidth). Labels are
 // drawn in the narrower IBM Plex Sans, so the drawn plate hugs the text instead
 // of covering nearby lifelines and activation bars.
-const messageFontSize = readableMessages ? 11 : 10;
-const messageUnitWidth = readableMessages ? 6.6 : 5.2;
+const messageFontSize = blockMode ? BLOCK_TEXT.message : readableMessages ? 10.5 : 10;
+const messageUnitWidth = blockMode ? BLOCK_TEXT.message * 0.6 : readableMessages ? 6.6 : 5.2;
 const layout = {
   topY: 72,
   participantW,
@@ -471,7 +612,7 @@ function segmentLabelOccupants() {
 }
 
 function legacySegmentLabelBox(segment) {
-  const labelW = Math.max(42, textUnits(segment.label) * 5.2 + 14);
+  const labelW = Math.max(42, textUnits(segment.label) * SEGMENT_UNIT_WIDTH + 14);
   const occupied = segmentLabelOccupants();
   const label = { x: 56, y: segment.from - 22, width: labelW, height: 18 };
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -486,7 +627,7 @@ function legacySegmentLabelBox(segment) {
   // Another segment's title normally sits on that segment's own top border,
   // so its strip is taken too.
   const otherTitles = asArray(sequence.segments).filter((other) => other !== segment)
-    .map((other) => ({ x: 56, y: other.from - 22, width: Math.max(42, textUnits(other.label) * 5.2 + 14), height: 18 }));
+    .map((other) => ({ x: 56, y: other.from - 22, width: Math.max(42, textUnits(other.label) * SEGMENT_UNIT_WIDTH + 14), height: 18 }));
   const inside = { x: 56, y: segment.from + 4, width: labelW, height: 18 };
   for (let attempt = 0; attempt < 4 && inside.y + inside.height <= segment.to - 2; attempt += 1) {
     if (!segmentLabelMisplaced(inside, segment)
@@ -998,10 +1139,12 @@ function renderParticipant(participant) {
   const fill = componentFill[participant.type] || 'c-external';
   const hasSub = participant.sublabel != null && participant.sublabel !== '';
   const sub = hasSub
-    ? `\n          <text data-detail="context" x="${participant.cx}" y="${layout.topY + layout.participantSublabelY}" class="t-muted" font-size="${fittedNodeFontSize(participant.sublabel, layout.participantW, readableSublabelPreferred, readableSublabelMinimum)}" text-anchor="middle">${esc(participant.sublabel)}</text>`
+    ? `\n          <text data-detail="context" x="${participant.cx}" y="${layout.topY + layout.participantSublabelY}" class="t-muted" font-size="${sansFontSize(fittedNodeFontSize(participant.sublabel, layout.participantW, readableSublabelPreferred, readableSublabelMinimum))}" text-anchor="middle">${esc(participant.sublabel)}</text>`
     : '';
   const brand = renderBrandMark(participant, { x: participant.x + layout.participantW - 22, y: layout.topY + 6 });
-  const labelFontSize = fittedNodeFontSize(participant.label, brandLabelFitWidth(participant, layout.participantW), 11, 8);
+  const labelFontSize = blockMode
+    ? fittedNodeFontSize(participant.label, brandLabelFitWidth(participant, layout.participantW), BLOCK_TEXT.label, BLOCK_TEXT.labelMinimum)
+    : fittedNodeFontSize(participant.label, brandLabelFitWidth(participant, layout.participantW), 11, 8);
   const passport = {
     kind: participant.type,
     sublabel: participant.sublabel,
@@ -1038,7 +1181,7 @@ function renderSegmentLabel(segment, index) {
   const label = segmentLabelBox(segment);
   return `        <g data-seq-y="${segment.from}" data-graph-role="segment-label" data-segment-id="${index}">
           <rect x="${label.x}" y="${label.y}" width="${label.width}" height="${label.height}" rx="3" class="c-mask"/>
-          <text x="${label.x + 6}" y="${label.y + 13}" class="t-muted" font-size="9" font-weight="600">${esc(segment.label)}</text>
+          <text x="${label.x + 6}" y="${label.y + 13}" class="t-muted" font-size="${SEGMENT_FONT_SIZE}" font-weight="600">${esc(segment.label)}</text>
         </g>`;
 }
 
@@ -1096,7 +1239,7 @@ function renderMessage(message, index) {
   // Notes carry message conditions and already reserve timeline space. Keep
   // them readable at the default depth; Map still hides context without reflow.
   const note = noteBox
-    ? `\n        <text data-detail="context" x="${noteBox.x}" y="${noteBox.baseline}" class="t-muted" font-size="${NOTE_RENDER_FONT_SIZE}">${noteContent}</text>`
+    ? `\n        <text data-detail="context" x="${noteBox.x}" y="${noteBox.baseline}" class="t-note" font-size="${NOTE_FONT_SIZE}">${noteContent}</text>`
     : '';
   return `        <g data-seq-y="${message.y}" ${focusEdgeAttrs(message.from, message.to, message.label, index, message.id)}>
           <path data-composition-edge-from="${esc(message.from)}" data-composition-edge-to="${esc(message.to)}"${message.id ? ` data-composition-edge-id="${esc(message.id)}"` : ''} data-composition-points="${routePointsValue([[start, message.y], [end, message.y]])}" d="M ${start} ${message.y} L ${end} ${message.y}" class="${cls}"${animateAttr(sequence.meta, 'edge', index)} stroke-width="${strokeWidth}"${dash} marker-end="url(#${marker})"/>
@@ -1109,9 +1252,9 @@ ${messageLabel(message, start, end)}${noteBackdrop(message)}${note}
 // service, firmware or hardware part, from the block title down to the
 // lifeline end. Blocks run left to right in GROUP_LAYER_ORDER.
 const GROUP_LAYER_ORDER = ['ui', 'app', 'service', 'firmware', 'hardware'];
-const GROUP_PADDING = 6;
+const GROUP_PADDING = 3;
 const GROUP_TITLE_HEIGHT = 20;
-const GROUP_TITLE_FONT_SIZE = 10;
+const GROUP_TITLE_FONT_SIZE = blockMode ? BLOCK_TEXT.groupTitle : 9;
 const groups = asArray(sequence.groups);
 
 function groupBox(group) {
@@ -1161,8 +1304,27 @@ function haloText(x, y, anchor, cls, text) {
 function noteMarkup(x, baseline, lines) {
   if (!lines.length) return '';
   const content = lines.map((line, index) => `<tspan x="${x}" dy="${index ? NOTE_LINE_HEIGHT : 0}">${esc(line)}</tspan>`).join('');
-  return `<text x="${x}" y="${baseline}" class="t-muted" font-size="${NOTE_RENDER_FONT_SIZE}">${content}</text>`;
+  return `<text x="${x}" y="${baseline}" class="t-note" font-size="${NOTE_FONT_SIZE}">${content}</text>`;
 }
+
+// Splits a label into two lines at the space nearest its middle, or else at
+// the camelCase boundary nearest its middle (getController / PublicHash).
+function splitLabel(label) {
+  const text = String(label);
+  const spaces = [];
+  const humps = [];
+  for (let index = 1; index < text.length; index += 1) {
+    if (text[index - 1] === ' ') spaces.push(index);
+    else if (/[a-z0-9]/.test(text[index - 1]) && /[A-Z]/.test(text[index])) humps.push(index);
+  }
+  const cuts = spaces.length ? spaces : humps;
+  if (!cuts.length) return [text];
+  const middle = text.length / 2;
+  const cut = cuts.reduce((best, index) => (Math.abs(index - middle) < Math.abs(best - middle) ? index : best));
+  return [text.slice(0, cut).trimEnd(), text.slice(cut)];
+}
+
+const DETAIL_LABEL_LINE_HEIGHT = Math.round(messageFontSize * 1.25);
 
 // Where a step's detail block starts: below the step's arrow and note.
 function stepDetailBase(message) {
@@ -1184,9 +1346,15 @@ function stepDetailLayout(message, index) {
     const from = participants.get(detail.from);
     const to = participants.get(detail.to);
     if (!from || !to) return;
-    const arrowY = cursor + DETAIL_LABEL_RISE;
     const style = messageVariantStyle(detail.variant);
-    const labelWidth = textUnits(detail.label) * messageFontSize * SANS_WIDTH_FACTOR + 8;
+    const labelTextWidth = (text) => textUnits(text) * messageFontSize * SANS_WIDTH_FACTOR + 8;
+    // A call label wider than the room between its two lifelines' bars takes
+    // two lines, so it does not cover them.
+    const room = Math.abs(to.cx - from.cx) - 2 * LABEL_BAR_CLEARANCE;
+    const labelLines = from.id !== to.id && labelTextWidth(detail.label) > room ? splitLabel(detail.label) : [detail.label];
+    const extraRise = (labelLines.length - 1) * DETAIL_LABEL_LINE_HEIGHT;
+    const arrowY = cursor + DETAIL_LABEL_RISE + extraRise;
+    const labelWidth = Math.max(...labelLines.map(labelTextWidth));
     const parts = [];
     let noteX;
     let noteWidth;
@@ -1213,8 +1381,11 @@ function stepDetailLayout(message, index) {
       const end = to.cx - direction * 7;
       const center = (start + end) / 2;
       parts.push(`<path d="M ${start} ${arrowY} L ${end} ${arrowY}" class="${style.cls}" stroke-width="${style.strokeWidth}"${style.dash} marker-end="url(#${style.marker})"/>`);
-      parts.push(`<rect x="${center - labelWidth / 2}" y="${arrowY - 20}" width="${labelWidth}" height="${layout.labelH}" rx="3" class="c-mask"/>`);
-      parts.push(haloText(center, arrowY - 10, 'middle', style.accent, detail.label));
+      parts.push(`<rect x="${center - labelWidth / 2}" y="${arrowY - 20 - extraRise}" width="${labelWidth}" height="${layout.labelH + extraRise}" rx="3" class="c-mask"/>`);
+      labelLines.forEach((line, lineIndex) => {
+        const lineY = arrowY - 10 - (labelLines.length - 1 - lineIndex) * DETAIL_LABEL_LINE_HEIGHT;
+        parts.push(haloText(center, lineY, 'middle', style.accent, line));
+      });
       const gap = noteGapIndex(from.index, to.index);
       noteX = participantX(gap) + NOTE_ARROW_INSET + NOTE_TEXT_INSET;
       noteWidth = Math.max(1, participantX(gap + 1) - NOTE_LIFELINE_CLEARANCE - noteX);
@@ -1222,7 +1393,7 @@ function stepDetailLayout(message, index) {
     }
     const noteLines = detail.note ? wrapNoteText(detail.note, noteWidth) : [];
     parts.push(noteMarkup(noteX, noteBaseline, noteLines));
-    parts.push(`<text x="${STEP_RAIL_X}" y="${arrowY + 3}" class="seq-step-number" font-size="8" text-anchor="middle">${index + 1}.${detailIndex + 1}</text>`);
+    parts.push(`<text x="${STEP_RAIL_X}" y="${arrowY + 3}" class="seq-step-number" font-size="${blockMode ? BLOCK_TEXT.step : 8}" text-anchor="middle">${index + 1}.${detailIndex + 1}</text>`);
     rows.push(`          <g data-seq-detail-row="${index + 1}.${detailIndex + 1}">${parts.join('')}</g>`);
     const rowBottom = noteLines.length
       ? noteBaseline + (noteLines.length - 1) * NOTE_LINE_HEIGHT + 4
@@ -1241,8 +1412,8 @@ function renderStepMarks(message, index) {
     ? ` data-seq-detail-toggle="${index}" role="button" tabindex="0" aria-expanded="false" aria-label="${esc(`Step ${index + 1}: show details`)}"`
     : '';
   const badge = `          <g class="seq-step-badge${detail ? ' seq-step-toggle' : ''}"${toggleAttrs}>
-            <circle cx="${STEP_RAIL_X}" cy="${message.y}" r="8"/>
-            <text x="${STEP_RAIL_X}" y="${message.y + 3}" font-size="8.5" font-weight="700" text-anchor="middle">${index + 1}</text>
+            <circle cx="${STEP_RAIL_X}" cy="${message.y}" r="${blockMode ? 9.5 : 8}"/>
+            <text x="${STEP_RAIL_X}" y="${message.y + 3.5}" font-size="${blockMode ? BLOCK_TEXT.step : 8.5}" font-weight="700" text-anchor="middle">${index + 1}</text>
           </g>`;
   if (!detail) return `        <g data-seq-y="${message.y}">\n${badge}\n        </g>`;
   const target = participants.get(message.to);
@@ -1334,7 +1505,8 @@ function renderSvg() {
   // ratio, so without intrinsic-height the desktop Reader can neither narrow
   // nor scroll it and every default sequence fails the browser gate.
   const readerFit = sequence.meta?.viewBox ? '' : ' data-reader-fit="width-first"';
-  return `      <svg viewBox="0 0 ${viewBox[0]} ${viewBox[1]}" data-sequence-column-fit="${columnFit}"${readerFit} ${svgRootAttrs(sequence.meta)} data-motion-choreography="sequence">
+  const actualSize = blockMode ? ' data-seq-actual-size=""' : '';
+  return `      <svg viewBox="0 0 ${viewBox[0]} ${viewBox[1]}" data-sequence-column-fit="${columnFit}"${readerFit}${actualSize} ${svgRootAttrs(sequence.meta)} data-motion-choreography="sequence">
 ${svgAccessibleText(sequence.meta, 'sequence')}
 ${renderDefinitions()}
 

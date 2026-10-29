@@ -32,6 +32,10 @@ Example: `examples/commissioning-blocks.sequence.json`.
 
 ## Layout notes
 
-- Leave the usual spacing between top-level messages; details do not need extra room in the collapsed diagram.
+- A Sequence with blocks is laid out for reading at its actual size: the viewer keeps it 1:1 and scrolls sideways
+  when it is wider than the window. Participants inside one block sit close together; the space between blocks is
+  about twice as wide, so calls between blocks read as long trips. Do not set `meta.viewBox` for such a diagram.
+- Message `y` values only set the order of the steps. The renderer spaces the steps by their notes and moves
+  activation and segment edges with them, so keep `y` increasing in call order and do not tune spacing by hand.
 - Keep labels short. A label wider than its lanes moves toward the side without an active bar, but a label between
   two active bars still touches them; put parameters in the note instead.
