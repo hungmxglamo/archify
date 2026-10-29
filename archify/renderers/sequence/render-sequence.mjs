@@ -73,7 +73,33 @@ function timelineLabelsFit(canvasWidth) {
   }) && asArray(sequence.segments).every((segment) => 56 + Math.max(42, textUnits(segment.label) * 5.2 + 14) <= canvasWidth - 48);
 }
 const readableCanvasWidth = Math.floor(DESKTOP_READER_DIAGRAM_WIDTH * participantTextFit.sublabelPreferred / MIN_PROJECTED_NODE_TEXT_PX);
+// Message labels are drawn in IBM Plex Sans, about 0.52em per character.
+const SANS_WIDTH_FACTOR = 0.52;
+// Activation bars reach 5px past a lifeline; keep 3px of air beyond each one.
+const LABEL_BAR_CLEARANCE = 8;
+// Widen a renderer-sized canvas until each message label fits between the
+// activation bars of the lanes it spans, but never past the readable width.
+function labelCanvasWidth(baseWidth) {
+  const participantIndex = new Map(asArray(sequence.participants).map((participant, index) => [participant.id, index]));
+  const fontSize = sequence.meta?.quality_profile === 'showcase' ? 11 : 10;
+  const labelsFit = (canvasWidth) => {
+    const { gap } = spreadColumnGeometry(canvasWidth);
+    return asArray(sequence.messages).every((message) => {
+      const lanes = Math.abs((participantIndex.get(message.to) ?? 0) - (participantIndex.get(message.from) ?? 0));
+      if (!lanes) return true;
+      return textUnits(message.label) * fontSize * SANS_WIDTH_FACTOR + 8 <= lanes * gap - 2 * LABEL_BAR_CLEARANCE;
+    });
+  };
+  if (labelsFit(baseWidth)) return baseWidth;
+  for (let candidate = baseWidth + 20; candidate < readableCanvasWidth; candidate += 20) {
+    if (labelsFit(candidate)) return candidate;
+  }
+  return Math.max(baseWidth, readableCanvasWidth);
+}
 function automaticCanvasWidth() {
+  return labelCanvasWidth(participantCanvasWidth());
+}
+function participantCanvasWidth() {
   const participantsFit = (width) => asArray(sequence.participants).every((participant) => (
     textUnits(participant.label) * 6.8 <= width + 6
     && (!participant.sublabel || minimumNodeTextWidth(participant.sublabel, participantTextFit.sublabelMinimum) <= availableNodeTextWidth(width))
@@ -166,6 +192,9 @@ function participantX(index) {
 // path) breaks after its punctuation, otherwise at any character.
 const NOTE_FONT_SIZE = 7;
 const NOTE_LINE_HEIGHT = NOTE_FONT_SIZE + 4;
+// Notes are drawn in IBM Plex Sans (about 0.52em per character), so 8px text
+// fits the same wrap width that 7px monospace text (0.6em) is measured with.
+const NOTE_RENDER_FONT_SIZE = 8;
 // The first line keeps its original position: 12px past the arrow start,
 // which sits 7px from the lifeline.
 const NOTE_ARROW_INSET = 7;
@@ -318,7 +347,10 @@ const viewBox = sequence.meta?.viewBox || [automaticWidth, automaticHeight];
 // a shorter one shrinks the readable band (validated below) instead of clipping.
 
 // Showcase is the fast-authoring default; standard retains legacy label geometry.
-const messageFontSize = readableMessages ? 11 : 9;
+// Layout and checks keep the monospace estimate (messageUnitWidth). Labels are
+// drawn in the narrower IBM Plex Sans, so the drawn plate hugs the text instead
+// of covering nearby lifelines and activation bars.
+const messageFontSize = readableMessages ? 11 : 10;
 const messageUnitWidth = readableMessages ? 6.6 : 5.2;
 const layout = {
   topY: 72,
@@ -371,6 +403,37 @@ function messageGeometry(message) {
   return { start, end, center: (start + end) / 2 };
 }
 
+// Activation bar span [left, right] of a participant at time y, or null.
+function activeBarAt(participantId, y) {
+  const participant = participants.get(participantId);
+  if (!participant) return null;
+  const active = asArray(sequence.activations).some((activation) => activation.participant === participantId
+    && activation.from - 2 <= y && y <= activation.to + 2);
+  return active ? { left: participant.cx - 5, right: participant.cx + 5 } : null;
+}
+
+// A label wider than the room between the activation bars of its own lanes
+// moves toward the side without an active bar, so its text does not sit on top
+// of that bar. It stays centred when both or neither end has a bar, or when the
+// moved label would reach another participant's active bar.
+function messageLabelCenter(message, geometry) {
+  const from = participants.get(message.from);
+  const to = participants.get(message.to);
+  const width = textUnits(message.label) * messageFontSize * SANS_WIDTH_FACTOR + 8;
+  const [low, high] = from.cx < to.cx ? [from, to] : [to, from];
+  const lowBar = activeBarAt(low.id, message.y);
+  const highBar = activeBarAt(high.id, message.y);
+  const minX = lowBar ? lowBar.right + 3 : low.cx;
+  const maxX = highBar ? highBar.left - 3 : high.cx;
+  if (width <= maxX - minX || Boolean(lowBar) === Boolean(highBar)) return geometry.center;
+  const center = lowBar ? minX + width / 2 : maxX - width / 2;
+  const reachesOtherBar = [...participants.keys()]
+    .filter((id) => id !== low.id && id !== high.id)
+    .map((id) => activeBarAt(id, message.y))
+    .some((bar) => bar && bar.left - 3 < center + width / 2 && center - width / 2 < bar.right + 3);
+  return reachesOtherBar ? geometry.center : center;
+}
+
 function messageLabelBox(message, relationIndex = null) {
   const geometry = messageGeometry(message);
   if (!geometry) return null;
@@ -379,7 +442,7 @@ function messageLabelBox(message, relationIndex = null) {
     relation: message,
     relationIndex,
     label: message.label,
-    x: geometry.center - width / 2,
+    x: messageLabelCenter(message, geometry) - width / 2,
     y: message.y - 20,
     width,
     height: layout.labelH,
@@ -921,6 +984,8 @@ function validateSequence() {
     problems.push(`Sequence content ends at y=${contentBottom}, leaving no room for the legend below it — set meta.viewBox[1] to at least ${legendHeight} or omit meta.viewBox so the canvas grows.`);
   }
 
+  problems.push(...groupProblems());
+
   if (problems.length) {
     throwDiagnosticProblems('Sequence layout validation failed', problems, {
       subject: { diagramType: 'sequence' },
@@ -959,17 +1024,19 @@ function lifelineEnd() {
   return legend?.titleY == null ? layout.lifelineBottom : Math.min(layout.lifelineBottom, legend.titleY - 22);
 }
 
+// data-seq-from / data-seq-to / data-seq-y tell the viewer which parts move
+// down or stretch when the reader opens a step's details (see stepDetailMarkup).
 function renderLifeline(participant, end) {
-  return `        <path d="M ${participant.cx} ${layout.lifelineTop} L ${participant.cx} ${end}" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>`;
+  return `        <path data-seq-from="${layout.lifelineTop}" data-seq-to="${end}" d="M ${participant.cx} ${layout.lifelineTop} L ${participant.cx} ${end}" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>`;
 }
 
 function renderSegment(segment, index) {
-  return `        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="${index}" x="48" y="${segment.from}" width="${viewBox[0] - 96}" height="${segment.to - segment.from}" rx="10" class="c-lane" stroke-width="1"/>`;
+  return `        <rect data-seq-from="${segment.from}" data-seq-to="${segment.to}" data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="${index}" x="48" y="${segment.from}" width="${viewBox[0] - 96}" height="${segment.to - segment.from}" rx="10" class="c-lane" stroke-width="1"/>`;
 }
 
 function renderSegmentLabel(segment, index) {
   const label = segmentLabelBox(segment);
-  return `        <g data-graph-role="segment-label" data-segment-id="${index}">
+  return `        <g data-seq-y="${segment.from}" data-graph-role="segment-label" data-segment-id="${index}">
           <rect x="${label.x}" y="${label.y}" width="${label.width}" height="${label.height}" rx="3" class="c-mask"/>
           <text x="${label.x + 6}" y="${label.y + 13}" class="t-muted" font-size="9" font-weight="600">${esc(segment.label)}</text>
         </g>`;
@@ -980,21 +1047,24 @@ function renderActivation(activation) {
   const fill = componentFill[activation.type] || componentFill[participant.type] || 'c-external';
   const x = participant.cx - 5;
   const height = activation.to - activation.from;
-  return `        <rect x="${x}" y="${activation.from}" width="10" height="${height}" rx="3" class="c-mask"/>
-        <rect x="${x}" y="${activation.from}" width="10" height="${height}" rx="3" class="${fill}" stroke-width="1"/>`;
+  const span = `data-seq-from="${activation.from}" data-seq-to="${activation.to}"`;
+  return `        <rect ${span} x="${x}" y="${activation.from}" width="10" height="${height}" rx="3" class="c-mask"/>
+        <rect ${span} x="${x}" y="${activation.from}" width="10" height="${height}" rx="3" class="${fill}" stroke-width="1"/>`;
 }
 
 function messageLabel(message, x1, x2) {
   const box = messageLabelBox(message);
   const center = box ? box.x + box.width / 2 : (x1 + x2) / 2;
   const y = message.y - 10;
-  const labelW = box?.width || Math.max(34, textUnits(message.label) * messageUnitWidth + 12);
+  const layoutW = box?.width || Math.max(34, textUnits(message.label) * messageUnitWidth + 12);
+  const labelW = Math.min(layoutW, Math.max(34, textUnits(message.label) * messageFontSize * SANS_WIDTH_FACTOR + 8));
   // A colored line gets a label in the same color, as in the legend swatches.
   // Gray lines (default and return) keep the readable muted text color.
   const accent = ['emphasis', 'security', 'dashed'].includes(message.variant) ? edgeLabelAccent(message.variant) : 't-muted';
+  // The thin halo keeps glyphs clear when an all-caps label runs past its plate.
   return `        <g data-detail="context">
           <rect x="${center - labelW / 2}" y="${y - 10}" width="${labelW}" height="${layout.labelH}" rx="3" class="c-mask"/>
-          <text x="${center}" y="${y}" class="${accent}" font-size="${messageFontSize}" text-anchor="middle">${esc(message.label)}</text>
+          <text x="${center}" y="${y}" class="${accent}" font-size="${messageFontSize}" text-anchor="middle" paint-order="stroke" stroke-width="3" stroke-linejoin="round" style="stroke: var(--mask)">${esc(message.label)}</text>
         </g>`;
 }
 
@@ -1026,14 +1096,215 @@ function renderMessage(message, index) {
   // Notes carry message conditions and already reserve timeline space. Keep
   // them readable at the default depth; Map still hides context without reflow.
   const note = noteBox
-    ? `\n        <text data-detail="context" x="${noteBox.x}" y="${noteBox.baseline}" class="t-muted" font-size="${NOTE_FONT_SIZE}">${noteContent}</text>`
+    ? `\n        <text data-detail="context" x="${noteBox.x}" y="${noteBox.baseline}" class="t-muted" font-size="${NOTE_RENDER_FONT_SIZE}">${noteContent}</text>`
     : '';
-  return `        <g ${focusEdgeAttrs(message.from, message.to, message.label, index, message.id)}>
+  return `        <g data-seq-y="${message.y}" ${focusEdgeAttrs(message.from, message.to, message.label, index, message.id)}>
           <path data-composition-edge-from="${esc(message.from)}" data-composition-edge-to="${esc(message.to)}"${message.id ? ` data-composition-edge-id="${esc(message.id)}"` : ''} data-composition-points="${routePointsValue([[start, message.y], [end, message.y]])}" d="M ${start} ${message.y} L ${end} ${message.y}" class="${cls}"${animateAttr(sequence.meta, 'edge', index)} stroke-width="${strokeWidth}"${dash} marker-end="url(#${marker})"/>
 ${messageLabel(message, start, end)}${noteBackdrop(message)}${note}
         </g>`;
 }
 
+
+// Blocks: one tinted band behind the adjacent participants of one app,
+// service, firmware or hardware part, from the block title down to the
+// lifeline end. Blocks run left to right in GROUP_LAYER_ORDER.
+const GROUP_LAYER_ORDER = ['ui', 'app', 'service', 'firmware', 'hardware'];
+const GROUP_PADDING = 6;
+const GROUP_TITLE_HEIGHT = 20;
+const GROUP_TITLE_FONT_SIZE = 10;
+const groups = asArray(sequence.groups);
+
+function groupBox(group) {
+  const members = asArray(group.participants).map((id) => participants.get(id)).filter(Boolean);
+  if (!members.length) return null;
+  const left = Math.min(...members.map((member) => member.x)) - GROUP_PADDING;
+  const right = Math.max(...members.map((member) => member.x + member.width)) + GROUP_PADDING;
+  return { left, right, top: layout.topY - GROUP_TITLE_HEIGHT };
+}
+
+function renderGroup(group, end) {
+  const box = groupBox(group);
+  if (!box) return '';
+  const bottom = end + 8;
+  return `        <g data-seq-group="${esc(group.id)}">
+          <rect data-seq-from="${box.top}" data-seq-to="${bottom}" x="${box.left}" y="${box.top}" width="${box.right - box.left}" height="${bottom - box.top}" rx="8" class="seq-group" data-layer="${esc(group.layer)}"/>
+          <text x="${box.left + 8}" y="${box.top + 14}" class="seq-group-title" data-layer="${esc(group.layer)}" font-size="${GROUP_TITLE_FONT_SIZE}" font-weight="600">${esc(group.label)}</text>
+        </g>`;
+}
+
+// Steps: when a diagram has blocks or detail steps, every top-level message
+// gets its number on the left rail. A step with details also gets a round
+// toggle on the lifeline it calls; opening it shows the detail steps right
+// below the step and moves the rest of the diagram down.
+const STEP_RAIL_X = 20;
+const DETAIL_ROW_TOP = 10;
+const DETAIL_LABEL_RISE = 24;
+const DETAIL_SELF_LOOP_WIDTH = 22;
+const stepsNumbered = groups.length > 0
+  || asArray(sequence.messages).some((message) => asArray(message.details).length);
+
+function messageVariantStyle(variant) {
+  const [cls, marker] = arrowClass[variant || 'default'] || arrowClass.default;
+  return {
+    cls,
+    marker,
+    strokeWidth: variant === 'emphasis' ? 1.8 : 1.4,
+    dash: variant === 'return' ? ' stroke-dasharray="3,5"' : '',
+    accent: ['emphasis', 'security', 'dashed'].includes(variant) ? edgeLabelAccent(variant) : 't-muted',
+  };
+}
+
+function haloText(x, y, anchor, cls, text) {
+  return `<text x="${x}" y="${y}" class="${cls}" font-size="${messageFontSize}" text-anchor="${anchor}" paint-order="stroke" stroke-width="3" stroke-linejoin="round" style="stroke: var(--mask)">${esc(text)}</text>`;
+}
+
+function noteMarkup(x, baseline, lines) {
+  if (!lines.length) return '';
+  const content = lines.map((line, index) => `<tspan x="${x}" dy="${index ? NOTE_LINE_HEIGHT : 0}">${esc(line)}</tspan>`).join('');
+  return `<text x="${x}" y="${baseline}" class="t-muted" font-size="${NOTE_RENDER_FONT_SIZE}">${content}</text>`;
+}
+
+// Where a step's detail block starts: below the step's arrow and note.
+function stepDetailBase(message) {
+  const note = noteLayout(message);
+  return Math.max(message.y + 22, note ? note.bottom + 8 : 0);
+}
+
+// Builds the detail block of one step at its collapsed position. Returns the
+// markup, its start y and its height; the viewer inserts the markup when the
+// reader opens the step.
+function stepDetailLayout(message, index) {
+  const details = asArray(message.details);
+  if (!details.length) return null;
+  const base = stepDetailBase(message);
+  const rows = [];
+  const problems = [];
+  let cursor = base + DETAIL_ROW_TOP;
+  details.forEach((detail, detailIndex) => {
+    const from = participants.get(detail.from);
+    const to = participants.get(detail.to);
+    if (!from || !to) return;
+    const arrowY = cursor + DETAIL_LABEL_RISE;
+    const style = messageVariantStyle(detail.variant);
+    const labelWidth = textUnits(detail.label) * messageFontSize * SANS_WIDTH_FACTOR + 8;
+    const parts = [];
+    let noteX;
+    let noteWidth;
+    let noteBaseline;
+    if (from.id === to.id) {
+      const x = from.cx + 6;
+      const loopEnd = x + DETAIL_SELF_LOOP_WIDTH;
+      parts.push(`<path d="M ${x} ${arrowY - 7} H ${loopEnd} V ${arrowY + 7} H ${x + 2}" class="${style.cls}" fill="none" stroke-width="${style.strokeWidth}"${style.dash} marker-end="url(#${style.marker})"/>`);
+      const labelX = loopEnd + 8;
+      parts.push(`<rect x="${labelX - 4}" y="${arrowY - 9}" width="${labelWidth}" height="${layout.labelH}" rx="3" class="c-mask"/>`);
+      parts.push(haloText(labelX, arrowY + 4, 'start', style.accent, detail.label));
+      const next = [...participants.values()].find((participant) => participant.index === from.index + 1);
+      noteX = labelX;
+      // Keep extra air before the next lifeline: the self-call note starts
+      // past the loop, so its line is short and wraps by the word.
+      noteWidth = Math.max(80, (next ? next.cx : viewBox[0] - 40) - NOTE_LIFELINE_CLEARANCE - 8 - noteX);
+      noteBaseline = arrowY + 20;
+      if (labelX - 4 + labelWidth > viewBox[0] - 8) {
+        problems.push(`Detail step "${detail.label}" of message "${message.label}" calls "${from.id}" itself and its label runs past the canvas edge — shorten the label.`);
+      }
+    } else {
+      const direction = to.cx > from.cx ? 1 : -1;
+      const start = from.cx + direction * 7;
+      const end = to.cx - direction * 7;
+      const center = (start + end) / 2;
+      parts.push(`<path d="M ${start} ${arrowY} L ${end} ${arrowY}" class="${style.cls}" stroke-width="${style.strokeWidth}"${style.dash} marker-end="url(#${style.marker})"/>`);
+      parts.push(`<rect x="${center - labelWidth / 2}" y="${arrowY - 20}" width="${labelWidth}" height="${layout.labelH}" rx="3" class="c-mask"/>`);
+      parts.push(haloText(center, arrowY - 10, 'middle', style.accent, detail.label));
+      const gap = noteGapIndex(from.index, to.index);
+      noteX = participantX(gap) + NOTE_ARROW_INSET + NOTE_TEXT_INSET;
+      noteWidth = Math.max(1, participantX(gap + 1) - NOTE_LIFELINE_CLEARANCE - noteX);
+      noteBaseline = arrowY + 18;
+    }
+    const noteLines = detail.note ? wrapNoteText(detail.note, noteWidth) : [];
+    parts.push(noteMarkup(noteX, noteBaseline, noteLines));
+    parts.push(`<text x="${STEP_RAIL_X}" y="${arrowY + 3}" class="seq-step-number" font-size="8" text-anchor="middle">${index + 1}.${detailIndex + 1}</text>`);
+    rows.push(`          <g data-seq-detail-row="${index + 1}.${detailIndex + 1}">${parts.join('')}</g>`);
+    const rowBottom = noteLines.length
+      ? noteBaseline + (noteLines.length - 1) * NOTE_LINE_HEIGHT + 4
+      : arrowY + (from.id === to.id ? 10 : 6);
+    cursor = rowBottom + 6;
+  });
+  const height = cursor + 6 - base;
+  const band = `<rect x="34" y="${base}" width="${viewBox[0] - 68}" height="${height}" rx="6" class="seq-detail-band"/>`;
+  return { base, height, markup: [band, ...rows].join('\n'), problems };
+}
+
+function renderStepMarks(message, index) {
+  if (!stepsNumbered) return '';
+  const detail = stepDetailLayout(message, index);
+  const toggleAttrs = detail
+    ? ` data-seq-detail-toggle="${index}" role="button" tabindex="0" aria-expanded="false" aria-label="${esc(`Step ${index + 1}: show details`)}"`
+    : '';
+  const badge = `          <g class="seq-step-badge${detail ? ' seq-step-toggle' : ''}"${toggleAttrs}>
+            <circle cx="${STEP_RAIL_X}" cy="${message.y}" r="8"/>
+            <text x="${STEP_RAIL_X}" y="${message.y + 3}" font-size="8.5" font-weight="700" text-anchor="middle">${index + 1}</text>
+          </g>`;
+  if (!detail) return `        <g data-seq-y="${message.y}">\n${badge}\n        </g>`;
+  const target = participants.get(message.to);
+  const lifelineToggle = `          <g class="seq-step-toggle seq-lifeline-toggle"${toggleAttrs}>
+            <circle cx="${target.cx}" cy="${message.y + 13}" r="7"/>
+            <path class="seq-toggle-sign" d="M ${target.cx - 3.5} ${message.y + 13} H ${target.cx + 3.5}"/>
+            <path class="seq-toggle-sign seq-toggle-plus" d="M ${target.cx} ${message.y + 9.5} V ${message.y + 16.5}"/>
+          </g>`;
+  const source = `          <g data-seq-detail-source="${index}" data-seq-base="${detail.base}" data-seq-height="${detail.height}" data-seq-markup="${esc(detail.markup)}"/>`;
+  return `        <g data-seq-y="${message.y}">\n${badge}\n${lifelineToggle}\n${source}\n        </g>`;
+}
+
+function groupProblems() {
+  const problems = [];
+  const seen = new Map();
+  const ordered = [];
+  groups.forEach((group, groupIndex) => {
+    const indexes = [];
+    for (const id of asArray(group.participants)) {
+      const participant = participants.get(id);
+      if (!participant) {
+        problems.push(`Block "${group.id}" lists unknown participant "${id}" (/groups/${groupIndex}/participants).`);
+        continue;
+      }
+      if (seen.has(id)) problems.push(`Participant "${id}" is in both block "${seen.get(id)}" and block "${group.id}" — keep each participant in one block.`);
+      seen.set(id, group.id);
+      indexes.push(participant.index);
+    }
+    if (!indexes.length) return;
+    indexes.sort((a, b) => a - b);
+    if (indexes[indexes.length - 1] - indexes[0] !== indexes.length - 1) {
+      problems.push(`Block "${group.id}" members are not next to each other — reorder participants so every member of "${group.label}" sits in adjacent columns.`);
+    }
+    ordered.push({ group, first: indexes[0] });
+    const box = groupBox(group);
+    const titleWidth = textUnits(group.label) * GROUP_TITLE_FONT_SIZE * SANS_WIDTH_FACTOR + 16;
+    if (box && titleWidth > box.right - box.left) {
+      problems.push(`Block title "${group.label}" (~${Math.round(titleWidth)}px) is wider than block "${group.id}" (${Math.round(box.right - box.left)}px) — shorten the title.`);
+    }
+  });
+  ordered.sort((a, b) => a.first - b.first);
+  let previous = null;
+  for (const { group } of ordered) {
+    const rank = GROUP_LAYER_ORDER.indexOf(group.layer);
+    if (rank < 0) continue;
+    if (previous && rank < GROUP_LAYER_ORDER.indexOf(previous.layer)) {
+      problems.push(`Block "${group.label}" (${group.layer}) sits right of block "${previous.label}" (${previous.layer}) — order blocks left to right as ${GROUP_LAYER_ORDER.join(' → ')}.`);
+    }
+    previous = group;
+  }
+  asArray(sequence.messages).forEach((message, messageIndex) => {
+    asArray(message.details).forEach((detail, detailIndex) => {
+      for (const end of ['from', 'to']) {
+        if (!participants.has(detail[end])) {
+          problems.push(`Detail step "${detail.label}" (/messages/${messageIndex}/details/${detailIndex}/${end}) names unknown participant "${detail[end]}".`);
+        }
+      }
+    });
+    problems.push(...(stepDetailLayout(message, messageIndex)?.problems || []));
+  });
+  return problems;
+}
 
 function legendLayout() {
   return {
@@ -1070,6 +1341,9 @@ ${renderDefinitions()}
         <!-- Background Grid -->
         <rect width="100%" height="100%" fill="url(#grid)" />
 
+        <!-- Blocks -->
+${groups.map((group) => renderGroup(group, lifelineEnd())).join('\n')}
+
         <!-- Time Segments -->
 ${asArray(sequence.segments).map(renderSegment).join('\n\n')}
 
@@ -1082,6 +1356,9 @@ ${asArray(sequence.activations).map(renderActivation).join('\n')}
         <!-- Messages -->
 ${asArray(sequence.messages).map(renderMessage).join('\n\n')}
 
+        <!-- Step numbers and detail toggles -->
+${asArray(sequence.messages).map(renderStepMarks).filter(Boolean).join('\n')}
+
         <!-- Segment Labels -->
 ${asArray(sequence.segments).map(renderSegmentLabel).join('\n')}
 
@@ -1089,7 +1366,9 @@ ${asArray(sequence.segments).map(renderSegmentLabel).join('\n')}
 ${participantList.map(renderParticipant).join('\n\n')}
 
         <!-- Legend -->
+        <g data-seq-y="${viewBox[1]}">
 ${renderLegend()}
+        </g>
       </svg>`;
 }
 

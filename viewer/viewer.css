@@ -738,7 +738,7 @@ html[data-motion="still"] svg {
 }
 
 svg {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', 'Noto Sans Mono CJK SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace;
+  font-family: 'IBM Plex Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Noto Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   width: 100%;
   min-width: min(900px, 100%);
   display: block;
@@ -4913,3 +4913,23 @@ html[data-ambient-motion="running"][data-motion="live"]:not([data-motion-owner])
   .relationship-pulse-overlay { display: none !important; }
   svg [data-node-id], svg [data-edge-from], svg [data-detail], svg [data-detail-anchor], svg [data-legend-hit], svg { transition: none !important; }
 }
+
+/* Sequence blocks, step numbers and detail toggles (local addition). */
+.seq-group { fill: color-mix(in srgb, var(--backend-fill) 45%, transparent); stroke: var(--backend-stroke); stroke-opacity: 0.35; stroke-width: 1; }
+.seq-group[data-layer="ui"] { fill: color-mix(in srgb, var(--frontend-fill) 45%, transparent); stroke: var(--frontend-stroke); }
+.seq-group[data-layer="service"] { fill: color-mix(in srgb, var(--database-fill) 45%, transparent); stroke: var(--database-stroke); }
+.seq-group[data-layer="firmware"] { fill: color-mix(in srgb, var(--cloud-fill) 45%, transparent); stroke: var(--cloud-stroke); }
+.seq-group[data-layer="hardware"] { fill: color-mix(in srgb, var(--external-fill) 55%, transparent); stroke: var(--external-stroke); }
+.seq-group[data-layer="external"] { fill: color-mix(in srgb, var(--messagebus-fill) 45%, transparent); stroke: var(--messagebus-stroke); }
+.seq-group-title { fill: var(--text-muted); letter-spacing: 0.02em; }
+.seq-step-badge circle { fill: var(--mask); stroke: var(--text-muted); stroke-width: 1; }
+.seq-step-badge text { fill: var(--text-muted); }
+.seq-step-number { fill: var(--text-muted); }
+.seq-step-toggle { cursor: pointer; }
+.seq-step-toggle circle { fill: var(--arrow-emphasis); stroke: var(--mask); stroke-width: 1.5; }
+.seq-step-badge.seq-step-toggle text { fill: var(--mask); }
+.seq-toggle-sign { stroke: var(--mask); stroke-width: 1.6; stroke-linecap: round; fill: none; }
+.seq-step-toggle[data-seq-open] .seq-toggle-plus { display: none; }
+.seq-step-toggle:hover circle, .seq-step-toggle:focus-visible circle { stroke: var(--text); stroke-width: 2; }
+.seq-step-toggle:focus { outline: none; }
+.seq-detail-band { fill: color-mix(in srgb, var(--mask) 55%, transparent); stroke: color-mix(in srgb, var(--arrow-emphasis) 55%, transparent); stroke-width: 1; stroke-dasharray: 4 3; }

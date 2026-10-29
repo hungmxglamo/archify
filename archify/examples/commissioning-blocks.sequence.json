@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Commissioning: overview to detail",
+    "locale": "en",
+    "output": "commissioning-blocks.html",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "Debug UI",
+      "sublabel": "MainActivity"
+    },
+    {
+      "id": "btm",
+      "type": "backend",
+      "label": "BtmDispatcher",
+      "sublabel": "BtmCommand"
+    },
+    {
+      "id": "cm",
+      "type": "backend",
+      "label": "Commissioning",
+      "sublabel": "Manager"
+    },
+    {
+      "id": "gpm",
+      "type": "security",
+      "label": "GslProvision",
+      "sublabel": "Manager"
+    },
+    {
+      "id": "crypto",
+      "type": "security",
+      "label": "GslCrypto",
+      "sublabel": "GslProvisionCrypto"
+    },
+    {
+      "id": "otbr",
+      "type": "cloud",
+      "label": "OTBR",
+      "sublabel": "ThreadService"
+    },
+    {
+      "id": "c6",
+      "type": "external",
+      "label": "C6 GSL",
+      "sublabel": "glc_server"
+    }
+  ],
+  "groups": [
+    {
+      "id": "ui-app",
+      "label": "Debug app",
+      "layer": "ui",
+      "participants": [
+        "ui"
+      ]
+    },
+    {
+      "id": "thread-service",
+      "label": "thread-service app",
+      "layer": "app",
+      "participants": [
+        "btm",
+        "cm",
+        "gpm",
+        "crypto"
+      ]
+    },
+    {
+      "id": "otbr-service",
+      "label": "OTBR",
+      "layer": "service",
+      "participants": [
+        "otbr"
+      ]
+    },
+    {
+      "id": "c6-fw",
+      "label": "C6 firmware",
+      "layer": "firmware",
+      "participants": [
+        "c6"
+      ]
+    }
+  ],
+  "segments": [
+    {
+      "from": 172,
+      "to": 380,
+      "label": "1. Start commissioning"
+    }
+  ],
+  "messages": [
+    {
+      "from": "ui",
+      "to": "btm",
+      "label": "add_mesh_node",
+      "variant": "emphasis",
+      "note": "User presses the button; GSL id comes from the mock",
+      "y": 200
+    },
+    {
+      "from": "btm",
+      "to": "cm",
+      "label": "startCommissioning",
+      "variant": "emphasis",
+      "note": "Parses the command, then calls",
+      "y": 262,
+      "details": [
+        {
+          "from": "cm",
+          "to": "cm",
+          "label": "startOnLooper",
+          "note": "Creates thread gsms-request and runs requestBundle on it"
+        },
+        {
+          "from": "cm",
+          "to": "gpm",
+          "label": "new GslProvisionManager"
+        },
+        {
+          "from": "gpm",
+          "to": "crypto",
+          "label": "createKeyPair",
+          "note": "EC256 key pair: private key and public key"
+        },
+        {
+          "from": "gpm",
+          "to": "gpm",
+          "label": "encodePublicKey"
+        }
+      ]
+    },
+    {
+      "from": "cm",
+      "to": "otbr",
+      "label": "openJoinerWindow",
+      "variant": "default",
+      "note": "eui64 and pskd come from the bundle",
+      "y": 340
+    },
+    {
+      "from": "otbr",
+      "to": "c6",
+      "label": "Joiner PSKd",
+      "variant": "default",
+      "y": 410,
+      "details": [
+        {
+          "from": "otbr",
+          "to": "c6",
+          "label": "DTLS handshake"
+        },
+        {
+          "from": "c6",
+          "to": "otbr",
+          "label": "attach + SRP",
+          "variant": "return"
+        }
+      ]
+    },
+    {
+      "from": "otbr",
+      "to": "cm",
+      "label": "onThreadJoined",
+      "variant": "return",
+      "y": 470
+    }
+  ],
+  "activations": [
+    {
+      "participant": "cm",
+      "from": 262,
+      "to": 480
+    },
+    {
+      "participant": "otbr",
+      "from": 340,
+      "to": 470
+    }
+  ]
+}

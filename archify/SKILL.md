@@ -61,7 +61,7 @@ Before the first candidate, use the authoring references and relevant repository
 |---|---|---|---|
 | `architecture` | Components, services, cloud/security boundaries, infrastructure; what something everyday is made of | `schemas/architecture.schema.json` | System descriptions, services, libraries, and CLI repos: `examples/web-app.architecture.json`; deployment repos: `examples/production-deployment.architecture.json` |
 | `workflow` | Processes, approval gates, tool calls, runbooks, CI/CD; plans and step-by-step life processes | `schemas/workflow.schema.json` | `examples/agent-tool-call.workflow.json` |
-| `sequence` | API call chains, request lifecycles, async traces, returns; back-and-forth between people | `schemas/sequence.schema.json` | `examples/cache-miss-request.sequence.json` |
+| `sequence` | API call chains, request lifecycles, async traces, returns; back-and-forth between people. For classes spread over several apps, services, firmware or hardware, read [Sequence blocks](references/sequence-blocks.md) | `schemas/sequence.schema.json` | `examples/cache-miss-request.sequence.json`; blocks and detail steps: `examples/commissioning-blocks.sequence.json` |
 | `dataflow` | Pipelines, ETL/ELT, lineage, governance, consumers; where money or documents go | `schemas/dataflow.schema.json` | `examples/product-analytics.dataflow.json` |
 | `lifecycle` | State/status transitions, retries, waiting and terminal states; where an application or order stands | `schemas/lifecycle.schema.json` | `examples/deployment-release.lifecycle.json` |
 | `erd` | Tables/entities, attributes, primary/foreign/unique keys, cardinality between them | `schemas/erd.schema.json` | `examples/orders.erd.json` |

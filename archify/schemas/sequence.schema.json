@@ -53,7 +53,10 @@
         },
         "column_fit": {
           "description": "Horizontal participant layout. Defaults to spread whether or not meta.viewBox is supplied. Explicit fixed preserves the historical 86px boxes and 108px column gap. Use spread when a wide viewBox would leave unused horizontal space or meaningful participant labels do not fit the fixed boxes; spread derives box width and column distance from the viewBox with at least a 16px gap between participant cards without changing participant order or message semantics.",
-          "enum": ["fixed", "spread"]
+          "enum": [
+            "fixed",
+            "spread"
+          ]
         },
         "repository": {
           "$ref": "common.schema.json#/$defs/repository"
@@ -65,16 +68,28 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "mode": { "$ref": "common.schema.json#/$defs/legendMode" },
+            "mode": {
+              "$ref": "common.schema.json#/$defs/legendMode"
+            },
             "entries": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "default": { "$ref": "common.schema.json#/$defs/legendEntry" },
-                "emphasis": { "$ref": "common.schema.json#/$defs/legendEntry" },
-                "security": { "$ref": "common.schema.json#/$defs/legendEntry" },
-                "dashed": { "$ref": "common.schema.json#/$defs/legendEntry" },
-                "return": { "$ref": "common.schema.json#/$defs/legendEntry" }
+                "default": {
+                  "$ref": "common.schema.json#/$defs/legendEntry"
+                },
+                "emphasis": {
+                  "$ref": "common.schema.json#/$defs/legendEntry"
+                },
+                "security": {
+                  "$ref": "common.schema.json#/$defs/legendEntry"
+                },
+                "dashed": {
+                  "$ref": "common.schema.json#/$defs/legendEntry"
+                },
+                "return": {
+                  "$ref": "common.schema.json#/$defs/legendEntry"
+                }
               }
             }
           }
@@ -122,12 +137,54 @@
           "sublabel": {
             "type": "string"
           },
-          "icon": { "$ref": "common.schema.json#/$defs/nodeIcon" },
+          "icon": {
+            "$ref": "common.schema.json#/$defs/nodeIcon"
+          },
           "brand": {
             "$ref": "common.schema.json#/$defs/brandMark"
           },
           "sources": {
             "$ref": "common.schema.json#/$defs/sourceReferences"
+          }
+        }
+      }
+    },
+    "groups": {
+      "description": "Blocks that gather the participants of one app, service, firmware or hardware part. Members must be adjacent participants; blocks must follow the layer order ui, app, service, firmware, hardware from left to right.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "layer",
+          "participants"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/id"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "layer": {
+            "enum": [
+              "ui",
+              "app",
+              "service",
+              "firmware",
+              "hardware",
+              "external"
+            ]
+          },
+          "participants": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "common.schema.json#/$defs/id"
+            }
           }
         }
       }
@@ -197,6 +254,44 @@
           },
           "note": {
             "type": "string"
+          },
+          "details": {
+            "description": "Detailed steps inside a block that run right after this step. Hidden until the reader opens the step. A detail step may call its own participant.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "to",
+                "label"
+              ],
+              "properties": {
+                "from": {
+                  "$ref": "common.schema.json#/$defs/id"
+                },
+                "to": {
+                  "$ref": "common.schema.json#/$defs/id"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "variant": {
+                  "enum": [
+                    "default",
+                    "emphasis",
+                    "security",
+                    "dashed",
+                    "return"
+                  ]
+                },
+                "note": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
